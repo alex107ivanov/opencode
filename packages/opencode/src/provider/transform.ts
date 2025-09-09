@@ -106,10 +106,10 @@ export namespace ProviderTransform {
         const type = thinking["type"]
         const budgetTokens = thinking["budgetTokens"]
         if (type === "enabled" && typeof budgetTokens === "number" && budgetTokens > 0) {
-          return outputLimit - budgetTokens
+          return Math.max(outputLimit - budgetTokens, 1)
         }
       }
     }
-    return outputLimit
+    return Math.max(outputLimit, 1)
   }
 }
