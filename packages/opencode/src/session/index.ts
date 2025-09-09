@@ -687,6 +687,7 @@ export namespace Session {
         )
       }, 0)
       if (size > limit) {
+        log.info("compact", { limit, size })
         state().autoCompacting.set(input.sessionID, true)
         await summarize({
           sessionID: input.sessionID,
@@ -705,6 +706,7 @@ export namespace Session {
       const tokens =
         previous.tokens.input + previous.tokens.cache.read + previous.tokens.cache.write + previous.tokens.output
       if (model.info.limit.context && tokens > Math.max((model.info.limit.context - outputLimit) * 0.9, 0)) {
+        log.info("compact", { tokens, limit: model.info.limit.context })
         state().autoCompacting.set(input.sessionID, true)
 
         await summarize({
