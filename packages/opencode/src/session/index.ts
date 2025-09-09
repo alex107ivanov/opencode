@@ -632,15 +632,6 @@ export namespace Session {
         ]
       }),
     ).then((x) => x.flat())
-    const cfg = await Config.get()
-    const limit = cfg.prompt_size_limit
-    if (limit) {
-      const size = userParts.reduce((n, p) => {
-        if (p.type === "text") return n + p.text.length
-        return n
-      }, 0)
-      if (size > limit) throw new Error("prompt too large")
-    }
     await Plugin.trigger(
       "chat.message",
       {},
@@ -683,6 +674,28 @@ export namespace Session {
       return Provider.defaultModel()
     })().then((x) => Provider.getModel(x.providerID, x.modelID))
     let msgs = await messages(input.sessionID)
+    const cfg = await Config.get()
+    const limit = cfg.prompt_size_limit
+    if (limit) {
+      const size = msgs.reduce((n, m) => {
+        return (
+          n +
+          m.parts.reduce((p, part) => {
+            if (part.type === "text") return p + part.text.length
+            return p
+          }, 0)
+        )
+      }, 0)
+      if (size > limit) {
+        state().autoCompacting.set(input.sessionID, true)
+        await summarize({
+          sessionID: input.sessionID,
+          providerID: model.providerID,
+          modelID: model.info.id,
+        })
+        return prompt(input)
+      }
+    }
 
     const previous = msgs.filter((x) => x.info.role === "assistant").at(-1)?.info as MessageV2.Assistant
     const outputLimit = Math.min(model.info.limit.output, OUTPUT_TOKEN_MAX) || OUTPUT_TOKEN_MAX
