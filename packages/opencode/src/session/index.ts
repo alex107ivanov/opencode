@@ -676,10 +676,19 @@ export namespace Session {
     let msgs = await messages(input.sessionID)
 
     const previous = msgs.filter((x) => x.info.role === "assistant").at(-1)?.info as MessageV2.Assistant
-    const tokens =
+    const priorTokens =
       previous?.tokens
-        ? previous.tokens.input + previous.tokens.cache.read + previous.tokens.cache.write + previous.tokens.output
+        ?
+            previous.tokens.input +
+            previous.tokens.cache.read +
+            previous.tokens.cache.write +
+            previous.tokens.output
         : 0
+    const userTokens = userParts.reduce(
+      (sum, part) => (part.type === "text" ? sum + Math.ceil(part.text.length / 3) : sum),
+      0,
+    )
+    const tokens = priorTokens + userTokens
     const outputLimit = Math.min(
       model.info.limit.output ?? OUTPUT_TOKEN_MAX,
       OUTPUT_TOKEN_MAX,
