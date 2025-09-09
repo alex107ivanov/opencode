@@ -676,22 +676,26 @@ export namespace Session {
     let msgs = await messages(input.sessionID)
 
     const previous = msgs.filter((x) => x.info.role === "assistant").at(-1)?.info as MessageV2.Assistant
-    const outputLimit = Math.min(model.info.limit.output, OUTPUT_TOKEN_MAX) || OUTPUT_TOKEN_MAX
+    const tokens =
+      previous?.tokens
+        ? previous.tokens.input + previous.tokens.cache.read + previous.tokens.cache.write + previous.tokens.output
+        : 0
+    const outputLimit = Math.min(
+      model.info.limit.output ?? OUTPUT_TOKEN_MAX,
+      OUTPUT_TOKEN_MAX,
+      model.info.limit.context ? Math.max(model.info.limit.context - tokens, 0) : OUTPUT_TOKEN_MAX,
+    )
 
     // auto summarize if too long
-    if (previous && previous.tokens) {
-      const tokens =
-        previous.tokens.input + previous.tokens.cache.read + previous.tokens.cache.write + previous.tokens.output
-      if (model.info.limit.context && tokens > Math.max((model.info.limit.context - outputLimit) * 0.9, 0)) {
-        state().autoCompacting.set(input.sessionID, true)
+    if (model.info.limit.context && tokens > Math.max((model.info.limit.context - outputLimit) * 0.9, 0)) {
+      state().autoCompacting.set(input.sessionID, true)
 
-        await summarize({
-          sessionID: input.sessionID,
-          providerID: model.providerID,
-          modelID: model.info.id,
-        })
-        return prompt(input)
-      }
+      await summarize({
+        sessionID: input.sessionID,
+        providerID: model.providerID,
+        modelID: model.info.id,
+      })
+      return prompt(input)
     }
     using abort = lock(input.sessionID)
 
