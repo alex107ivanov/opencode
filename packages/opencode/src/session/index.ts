@@ -632,6 +632,15 @@ export namespace Session {
         ]
       }),
     ).then((x) => x.flat())
+    const cfg = await Config.get()
+    const limit = cfg.prompt_size_limit
+    if (limit) {
+      const size = userParts.reduce((n, p) => {
+        if (p.type === "text") return n + p.text.length
+        return n
+      }, 0)
+      if (size > limit) throw new Error("prompt too large")
+    }
     await Plugin.trigger(
       "chat.message",
       {},
