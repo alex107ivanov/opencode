@@ -69,6 +69,15 @@ export namespace Session {
     return title.startsWith(parentSessionTitlePrefix)
   }
 
+  function partTokens(parts: MessageV2.Part[]) {
+    const count = (text: string) => Math.ceil(text.length / 3)
+    return parts.reduce((n, p) => {
+      if (p.type === "text") return n + count(p.text)
+      if (p.type === "file" && p.source?.text?.value) return n + count(p.source.text.value)
+      return n
+    }, 0)
+  }
+
   export const Info = z
     .object({
       id: Identifier.schema("session"),
@@ -676,23 +685,27 @@ export namespace Session {
     let msgs = await messages(input.sessionID)
 
     const previous = msgs.filter((x) => x.info.role === "assistant").at(-1)?.info as MessageV2.Assistant
-    const outputLimit = Math.min(model.info.limit.output, OUTPUT_TOKEN_MAX) || OUTPUT_TOKEN_MAX
-
-    // auto summarize if too long
-    if (previous && previous.tokens) {
-      const tokens =
-        previous.tokens.input + previous.tokens.cache.read + previous.tokens.cache.write + previous.tokens.output
-      if (model.info.limit.context && tokens > Math.max((model.info.limit.context - outputLimit) * 0.9, 0)) {
-        state().autoCompacting.set(input.sessionID, true)
-
-        await summarize({
-          sessionID: input.sessionID,
-          providerID: model.providerID,
-          modelID: model.info.id,
-        })
-        return prompt(input)
-      }
+    const conf = await Config.state()
+    const maxOut = conf.max_output_tokens ?? OUTPUT_TOKEN_MAX
+    const outputLimit = Math.min(model.info.limit.output, maxOut) || maxOut
+    const prevTokens =
+      previous && previous.tokens
+        ? previous.tokens.input + previous.tokens.cache.read + previous.tokens.cache.write + previous.tokens.output
+        : 0
+    const newTokens = partTokens(userParts)
+    const totalTokens = prevTokens + newTokens
+    const ctx = model.info.limit.context
+    const threshold = ctx ? Math.max((ctx - outputLimit) * 0.9, 0) : 0
+    if (ctx && totalTokens > threshold) {
+      state().autoCompacting.set(input.sessionID, true)
+      await summarize({
+        sessionID: input.sessionID,
+        providerID: model.providerID,
+        modelID: model.info.id,
+      })
+      return prompt(input)
     }
+    const remain = ctx ? Math.max(ctx - totalTokens, 1) : outputLimit
     using abort = lock(input.sessionID)
 
     const lastSummary = msgs.findLast((msg) => msg.info.role === "assistant" && msg.info.summary === true)
@@ -1025,7 +1038,12 @@ export namespace Session {
           : undefined,
       maxRetries: 3,
       activeTools: Object.keys(tools).filter((x) => x !== "invalid"),
-      maxOutputTokens: ProviderTransform.maxOutputTokens(model.providerID, outputLimit, params.options),
+      maxOutputTokens: ProviderTransform.maxOutputTokens(
+        model.providerID,
+        outputLimit,
+        params.options,
+        remain,
+      ),
       abortSignal: abort.signal,
       stopWhen: async ({ steps }) => {
         if (steps.length >= 1000) {

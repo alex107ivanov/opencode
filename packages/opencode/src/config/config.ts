@@ -366,6 +366,12 @@ export namespace Config {
         .optional()
         .describe("@deprecated Use 'share' field instead. Share newly created sessions automatically"),
       autoupdate: z.boolean().optional().describe("Automatically update to the latest version"),
+      max_output_tokens: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Maximum tokens allowed in model responses"),
       disabled_providers: z.array(z.string()).optional().describe("Disable providers that are loaded automatically"),
       model: z.string().describe("Model to use in the format of provider/model, eg anthropic/claude-2").optional(),
       small_model: z
