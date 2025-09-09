@@ -674,6 +674,29 @@ export namespace Session {
       return Provider.defaultModel()
     })().then((x) => Provider.getModel(x.providerID, x.modelID))
     let msgs = await messages(input.sessionID)
+    const cfg = await Config.get()
+    const limit = cfg.prompt_size_limit
+    if (limit) {
+      const size = msgs.reduce((n, m) => {
+        return (
+          n +
+          m.parts.reduce((p, part) => {
+            if (part.type === "text") return p + part.text.length
+            return p
+          }, 0)
+        )
+      }, 0)
+      if (size > limit) {
+        log.info("compact", { limit, size })
+        state().autoCompacting.set(input.sessionID, true)
+        await summarize({
+          sessionID: input.sessionID,
+          providerID: model.providerID,
+          modelID: model.info.id,
+        })
+        return prompt(input)
+      }
+    }
 
     const previous = msgs.filter((x) => x.info.role === "assistant").at(-1)?.info as MessageV2.Assistant
     const outputLimit = Math.min(model.info.limit.output, OUTPUT_TOKEN_MAX) || OUTPUT_TOKEN_MAX
@@ -683,6 +706,7 @@ export namespace Session {
       const tokens =
         previous.tokens.input + previous.tokens.cache.read + previous.tokens.cache.write + previous.tokens.output
       if (model.info.limit.context && tokens > Math.max((model.info.limit.context - outputLimit) * 0.9, 0)) {
+        log.info("compact", { tokens, limit: model.info.limit.context })
         state().autoCompacting.set(input.sessionID, true)
 
         await summarize({

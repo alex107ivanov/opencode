@@ -372,6 +372,12 @@ export namespace Config {
         .string()
         .describe("Small model to use for tasks like title generation in the format of provider/model")
         .optional(),
+      prompt_size_limit: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Maximum prompt size in characters before sending to the model"),
       username: z
         .string()
         .optional()
