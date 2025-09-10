@@ -572,6 +572,10 @@ export type Config = {
    */
   autoshare?: boolean
   /**
+   * Run compactor before every prompt is sent to the model
+   */
+   autocompact?: boolean
+   /**
    * Automatically update to the latest version
    */
   autoupdate?: boolean

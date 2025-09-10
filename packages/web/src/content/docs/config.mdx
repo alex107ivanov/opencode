@@ -18,6 +18,7 @@ opencode supports both **JSON** and **JSONC** (JSON with Comments) formats.
   "theme": "opencode",
   "model": "anthropic/claude-sonnet-4-20250514",
   "autoupdate": true,
+  "autocompact": true,
 }
 ```
 
@@ -201,6 +202,19 @@ opencode will automatically download any new updates when it starts up. You can 
 {
   "$schema": "https://opencode.ai/config.json",
   "autoupdate": false
+}
+```
+
+---
+
+### Autocompact
+
+Enable the `autocompact` option to compact the session before every prompt is sent to the model.
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "autocompact": true
 }
 ```
 
