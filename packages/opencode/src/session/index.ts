@@ -57,6 +57,7 @@ export namespace Session {
   const log = Log.create({ service: "session" })
 
   const OUTPUT_TOKEN_MAX = 32_000
+  const INPUT_TOKEN_BUFFER = 256
 
   const parentSessionTitlePrefix = "New session - "
   const childSessionTitlePrefix = "Child session - "
@@ -683,20 +684,31 @@ export namespace Session {
       return Provider.defaultModel()
     })().then((x) => Provider.getModel(x.providerID, x.modelID))
     let msgs = await messages(input.sessionID)
+    const lastSummary = msgs.findLast((msg) => msg.info.role === "assistant" && msg.info.summary === true)
+    if (lastSummary) msgs = msgs.filter((msg) => msg.info.id >= lastSummary.info.id)
 
-    const previous = msgs.filter((x) => x.info.role === "assistant").at(-1)?.info as MessageV2.Assistant
+    const system = await (async () => {
+      const items = [
+        ...SystemPrompt.header(model.providerID),
+        ...(() => {
+          if (input.system) return [input.system]
+          if (agent.prompt) return [agent.prompt]
+          return SystemPrompt.provider(model.modelID)
+        })(),
+        ...(await SystemPrompt.environment()),
+        ...(await SystemPrompt.custom()),
+      ]
+      const [first, ...rest] = items
+      return [first, rest.join("\n")]
+    })()
+    const sysTokens = system.reduce((n, x) => n + Math.ceil(x.length / 3), 0)
+    const ctx = model.info.limit.context
     const conf = await Config.state()
     const maxOut = conf.max_output_tokens ?? OUTPUT_TOKEN_MAX
     const outputLimit = Math.min(model.info.limit.output, maxOut) || maxOut
-    const prevTokens =
-      previous && previous.tokens
-        ? previous.tokens.input + previous.tokens.cache.read + previous.tokens.cache.write + previous.tokens.output
-        : 0
-    const newTokens = partTokens(userParts)
-    const totalTokens = prevTokens + newTokens
-    const ctx = model.info.limit.context
-    const threshold = ctx ? Math.max((ctx - outputLimit) * 0.9, 0) : 0
-    if (ctx && totalTokens > threshold) {
+    const baseTokens = sysTokens + msgs.reduce((n, m) => n + partTokens(m.parts), 0)
+    const threshold = ctx ? Math.max((ctx - outputLimit - INPUT_TOKEN_BUFFER) * 0.9, 0) : 0
+    if (ctx && baseTokens > threshold) {
       state().autoCompacting.set(input.sessionID, true)
       await summarize({
         sessionID: input.sessionID,
@@ -705,11 +717,8 @@ export namespace Session {
       })
       return prompt(input)
     }
-    const remain = ctx ? Math.max(ctx - totalTokens, 1) : outputLimit
     using abort = lock(input.sessionID)
 
-    const lastSummary = msgs.findLast((msg) => msg.info.role === "assistant" && msg.info.summary === true)
-    if (lastSummary) msgs = msgs.filter((msg) => msg.info.id >= lastSummary.info.id)
     const numRealUserMsgs = msgs.filter(
       (m) => m.info.role === "user" && !m.parts.every((p) => "synthetic" in p && p.synthetic),
     ).length
@@ -790,19 +799,8 @@ export namespace Session {
         synthetic: true,
       })
     }
-    let system = SystemPrompt.header(model.providerID)
-    system.push(
-      ...(() => {
-        if (input.system) return [input.system]
-        if (agent.prompt) return [agent.prompt]
-        return SystemPrompt.provider(model.modelID)
-      })(),
-    )
-    system.push(...(await SystemPrompt.environment()))
-    system.push(...(await SystemPrompt.custom()))
-    // max 2 system prompt messages for caching purposes
-    const [first, ...rest] = system
-    system = [first, rest.join("\n")]
+    const tokens = sysTokens + msgs.reduce((n, m) => n + partTokens(m.parts), 0)
+    const remain = ctx ? Math.max(ctx - tokens - INPUT_TOKEN_BUFFER, 1) : outputLimit
 
     const assistantMsg: MessageV2.Info = {
       id: Identifier.ascending("message"),
