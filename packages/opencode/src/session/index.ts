@@ -57,6 +57,7 @@ export namespace Session {
   const log = Log.create({ service: "session" })
 
   const OUTPUT_TOKEN_MAX = 32_000
+  const INPUT_TOKEN_BUFFER = 256
 
   const parentSessionTitlePrefix = "New session - "
   const childSessionTitlePrefix = "Child session - "
@@ -67,6 +68,15 @@ export namespace Session {
 
   function isDefaultTitle(title: string) {
     return title.startsWith(parentSessionTitlePrefix)
+  }
+
+  function partTokens(parts: MessageV2.Part[]) {
+    const count = (text: string) => Math.ceil(text.length / 3)
+    return parts.reduce((n, p) => {
+      if (p.type === "text") return n + count(p.text)
+      if (p.type === "file" && p.source?.text?.value) return n + count(p.source.text.value)
+      return n
+    }, 0)
   }
 
   export const Info = z
@@ -674,29 +684,41 @@ export namespace Session {
       return Provider.defaultModel()
     })().then((x) => Provider.getModel(x.providerID, x.modelID))
     let msgs = await messages(input.sessionID)
+    const lastSummary = msgs.findLast((msg) => msg.info.role === "assistant" && msg.info.summary === true)
+    if (lastSummary) msgs = msgs.filter((msg) => msg.info.id >= lastSummary.info.id)
 
-    const previous = msgs.filter((x) => x.info.role === "assistant").at(-1)?.info as MessageV2.Assistant
-    const outputLimit = Math.min(model.info.limit.output, OUTPUT_TOKEN_MAX) || OUTPUT_TOKEN_MAX
-
-    // auto summarize if too long
-    if (previous && previous.tokens) {
-      const tokens =
-        previous.tokens.input + previous.tokens.cache.read + previous.tokens.cache.write + previous.tokens.output
-      if (model.info.limit.context && tokens > Math.max((model.info.limit.context - outputLimit) * 0.9, 0)) {
-        state().autoCompacting.set(input.sessionID, true)
-
-        await summarize({
-          sessionID: input.sessionID,
-          providerID: model.providerID,
-          modelID: model.info.id,
-        })
-        return prompt(input)
-      }
+    const system = await (async () => {
+      const items = [
+        ...SystemPrompt.header(model.providerID),
+        ...(() => {
+          if (input.system) return [input.system]
+          if (agent.prompt) return [agent.prompt]
+          return SystemPrompt.provider(model.modelID)
+        })(),
+        ...(await SystemPrompt.environment()),
+        ...(await SystemPrompt.custom()),
+      ]
+      const [first, ...rest] = items
+      return [first, rest.join("\n")]
+    })()
+    const sysTokens = system.reduce((n, x) => n + Math.ceil(x.length / 3), 0)
+    const ctx = model.info.limit.context
+    const conf = await Config.state()
+    const maxOut = conf.max_output_tokens ?? OUTPUT_TOKEN_MAX
+    const outputLimit = Math.min(model.info.limit.output, maxOut) || maxOut
+    const baseTokens = sysTokens + msgs.reduce((n, m) => n + partTokens(m.parts), 0)
+    const threshold = ctx ? Math.max((ctx - outputLimit - INPUT_TOKEN_BUFFER) * 0.9, 0) : 0
+    if (ctx && baseTokens > threshold) {
+      state().autoCompacting.set(input.sessionID, true)
+      await summarize({
+        sessionID: input.sessionID,
+        providerID: model.providerID,
+        modelID: model.info.id,
+      })
+      return prompt(input)
     }
     using abort = lock(input.sessionID)
 
-    const lastSummary = msgs.findLast((msg) => msg.info.role === "assistant" && msg.info.summary === true)
-    if (lastSummary) msgs = msgs.filter((msg) => msg.info.id >= lastSummary.info.id)
     const numRealUserMsgs = msgs.filter(
       (m) => m.info.role === "user" && !m.parts.every((p) => "synthetic" in p && p.synthetic),
     ).length
@@ -777,19 +799,8 @@ export namespace Session {
         synthetic: true,
       })
     }
-    let system = SystemPrompt.header(model.providerID)
-    system.push(
-      ...(() => {
-        if (input.system) return [input.system]
-        if (agent.prompt) return [agent.prompt]
-        return SystemPrompt.provider(model.modelID)
-      })(),
-    )
-    system.push(...(await SystemPrompt.environment()))
-    system.push(...(await SystemPrompt.custom()))
-    // max 2 system prompt messages for caching purposes
-    const [first, ...rest] = system
-    system = [first, rest.join("\n")]
+    const tokens = sysTokens + msgs.reduce((n, m) => n + partTokens(m.parts), 0)
+    const remain = ctx ? Math.max(ctx - tokens - INPUT_TOKEN_BUFFER, 1) : outputLimit
 
     const assistantMsg: MessageV2.Info = {
       id: Identifier.ascending("message"),
@@ -1025,7 +1036,12 @@ export namespace Session {
           : undefined,
       maxRetries: 3,
       activeTools: Object.keys(tools).filter((x) => x !== "invalid"),
-      maxOutputTokens: ProviderTransform.maxOutputTokens(model.providerID, outputLimit, params.options),
+      maxOutputTokens: ProviderTransform.maxOutputTokens(
+        model.providerID,
+        outputLimit,
+        params.options,
+        remain,
+      ),
       abortSignal: abort.signal,
       stopWhen: async ({ steps }) => {
         if (steps.length >= 1000) {
