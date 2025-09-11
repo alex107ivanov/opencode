@@ -49,11 +49,13 @@ type Config struct {
 	Schema string `json:"$schema"`
 	// Agent configuration, see https://opencode.ai/docs/agent
 	Agent ConfigAgent `json:"agent"`
-	// @deprecated Use 'share' field instead. Share newly created sessions
-	// automatically
-	Autoshare bool `json:"autoshare"`
-	// Automatically update to the latest version
-	Autoupdate bool `json:"autoupdate"`
+        // @deprecated Use 'share' field instead. Share newly created sessions
+        // automatically
+        Autoshare bool `json:"autoshare"`
+        // Run compactor before every prompt is sent to the model
+        Autocompact bool `json:"autocompact"`
+        // Automatically update to the latest version
+        Autoupdate bool `json:"autoupdate"`
 	// Command configuration, see https://opencode.ai/docs/commands
 	Command map[string]ConfigCommand `json:"command"`
 	// Disable providers that are loaded automatically
@@ -96,12 +98,13 @@ type Config struct {
 
 // configJSON contains the JSON metadata for the struct [Config]
 type configJSON struct {
-	Schema            apijson.Field
-	Agent             apijson.Field
-	Autoshare         apijson.Field
-	Autoupdate        apijson.Field
-	Command           apijson.Field
-	DisabledProviders apijson.Field
+        Schema            apijson.Field
+        Agent             apijson.Field
+        Autoshare         apijson.Field
+        Autocompact       apijson.Field
+        Autoupdate        apijson.Field
+        Command           apijson.Field
+        DisabledProviders apijson.Field
 	Experimental      apijson.Field
 	Formatter         apijson.Field
 	Instructions      apijson.Field

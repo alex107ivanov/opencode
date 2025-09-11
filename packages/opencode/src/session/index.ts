@@ -632,24 +632,20 @@ export namespace Session {
         ]
       }),
     ).then((x) => x.flat())
-    await Plugin.trigger(
-      "chat.message",
-      {},
-      {
-        message: userMsg,
-        parts: userParts,
-      },
-    )
-    await updateMessage(userMsg)
-    for (const part of userParts) {
-      await updatePart(part)
-    }
-
-    // mark session as updated
-    // used for session list sorting (indicates when session was most recently interacted with)
-    await update(input.sessionID, (_draft) => {})
-
     if (isLocked(input.sessionID)) {
+      await Plugin.trigger(
+        "chat.message",
+        {},
+        {
+          message: userMsg,
+          parts: userParts,
+        },
+      )
+      await updateMessage(userMsg)
+      for (const part of userParts) {
+        await updatePart(part)
+      }
+      await update(input.sessionID, (_draft) => {})
       return new Promise((resolve) => {
         const queue = state().queued.get(input.sessionID) ?? []
         queue.push({
@@ -673,7 +669,29 @@ export namespace Session {
       }
       return Provider.defaultModel()
     })().then((x) => Provider.getModel(x.providerID, x.modelID))
+    const cfg = await Config.get()
     let msgs = await messages(input.sessionID)
+    if (cfg.autocompact && msgs.length) {
+      await summarize({
+        sessionID: input.sessionID,
+        providerID: model.providerID,
+        modelID: model.info.id,
+      })
+    }
+    await Plugin.trigger(
+      "chat.message",
+      {},
+      {
+        message: userMsg,
+        parts: userParts,
+      },
+    )
+    await updateMessage(userMsg)
+    for (const part of userParts) {
+      await updatePart(part)
+    }
+    await update(input.sessionID, (_draft) => {})
+    msgs = await messages(input.sessionID)
 
     const previous = msgs.filter((x) => x.info.role === "assistant").at(-1)?.info as MessageV2.Assistant
     const outputLimit = Math.min(model.info.limit.output, OUTPUT_TOKEN_MAX) || OUTPUT_TOKEN_MAX
